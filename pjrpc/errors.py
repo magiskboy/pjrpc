@@ -4,25 +4,32 @@ from functools import lru_cache
 class PJRPCException(Exception):
     """Base exception for pjrpc"""
 
-    message: str = ''
+    message: str = 'Internal JSON-RPC error.'
 
-    code: int = 0
+    code: int = 32603
 
 
-class MarshallError(PJRPCException):
-    code = 1
+class ParseError(PJRPCException):
+    code = 32700
 
-    message = 'Can not pack'
+    message = 'An error occurred on the server while parsing the JSON text'
 
-class UnmarshallError(PJRPCException):
-    code = 2
 
-    message = 'Can not unpack'
+class InvalidRequestError(PJRPCException):
+    code = 32600
+
+    message = 'The JSON sent is not a valid Request object'
+
 
 class MethodNotFoundError(PJRPCException):
-    code = 3
+    code = 32601
 
-    message = 'Method not found'
+    message = 'The method does not exist / is not available'
+
+class InvalidParamError(PJRPCException):
+    code = 32602
+
+    message = 'Invalid method parameter(s)'
 
 
 @lru_cache

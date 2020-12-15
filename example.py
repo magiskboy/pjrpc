@@ -1,18 +1,3 @@
-## Python JSON-RPC
-A lightweight RPC framework for python. It uses JSON-RPC as protocol.
-
-### Features
-
-- Support `async` syntax
-- Has commandline tool look like Flask
-- Use a directly TCP server, it's faster than using HTTP as transmission media
-
-
-### How to use?
-
-```python
-#example.py
-
 import asyncio
 from pjrpc import Service, Client
 
@@ -46,13 +31,3 @@ if __name__ == '__main__':
             print(ret)
 
     asyncio.run(main())
-```
-In the terminal, you can start the server. To start will launch a TCP server and the requests is served by that
-```sh
-$ pj example:PingServer --compress
-```
-In another terminal, you can execute client script
-```sh
-$ python example.py
-$ ['Hello David', 'Hello John', 'Hello Steve']
-```

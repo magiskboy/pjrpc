@@ -7,8 +7,8 @@ try:
 except ImportError:
     uvloop = None
 
-from .server import RPCServer
-from .utils import load_app_from_string
+from . import Server
+from . import logging
 
 
 @click.group()
@@ -21,7 +21,9 @@ def cli():
 @click.option('--host', default='localhost', help='Network interface')
 @click.option('--port', default=6969, help='Port for listening')
 @click.option('--loop', default='auto', type=click.Choice(['auto', 'asyncio', 'uvloop']))
-def run(app_path, host, port, loop):
+@click.option('--compress', is_flag=True, help='Choice data compression or not')
+@click.option('--log-level', type=click.Choice(['error', 'warning', 'debug', 'info']))
+def run(app_path, host, port, loop, compress, log_level):
     """Run RPC server from commandline"""
 
     if loop == 'uvloop':
@@ -32,7 +34,10 @@ def run(app_path, host, port, loop):
     elif loop == 'auto' and uvloop:
         asyncio.set_event_loop_policy(uvloop.EventLoopPolicy())
 
-    app_cls = load_app_from_string(app_path)
-    server = RPCServer(host, port, app_cls=app_cls)
+    logging.set_level(log_level)
 
-    asyncio.run(server.start())
+    server = Server(app_path, host, port, compress=compress)
+
+    loop = asyncio.get_event_loop()
+    loop.create_task(server.start())
+    loop.run_forever()

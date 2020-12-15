@@ -4,75 +4,83 @@ import inspect
 from functools import lru_cache
 from contextlib import asynccontextmanager
 from . import spec
-from .transport import Transport
+from . import transport as _transport
 from . import stub
 from . import errors
+from . import types
 
 
-class RPCClient:
+class Client:
     _request_id: int = 0
 
-    _buffer_size: int = 4096
-
-    _default_stub_cls: stub.Stub = stub.StubClient
+    _fn_without_rpc_method = {'close', 'setup'}
 
     def __init__(
         self,
         host: str = '127.0.0.1',
         port: int = 6969,
-        stub: T.Optional[T.Type] = None
+        compress: bool = False,
     ):
         self._host = host
         self._port = port
-        self._stub = stub or self._default_stub_cls()
+        self._transport = None
+        self._stub = stub.Stub(compress)
+        self._loop = asyncio.get_event_loop()
+        self._futures = {}
 
-    def __getattribute__(self, name: str):
+    def __getattribute__(self, name):
         member = object.__getattribute__(self, name)
 
-        if name.startswith('_'):
+        if name.startswith('_') or name in self._fn_without_rpc_method:
             return member
 
         if inspect.iscoroutinefunction(member) or callable(member):
             wrap = object.__getattribute__(self, '_convert_to_rpc_call')
-            return wrap()(member)
+            return wrap(member)
 
         return member
 
-    def _convert_to_rpc_call(self, timeout=None):
-        @lru_cache
-        def call_wrapper(func):
-            async def decorator(**kwargs):
-                nonlocal func
+    async def _message_serving(self):
+        async for data in self._transport.messages():
+            response = self._stub.unpack(data)
 
-                request = await self._make_request(func, kwargs)
-                in_data = self._stub.pack(request)
+            f = self._futures.pop(response.id)
+            if f:
+                if isinstance(response, spec.ErrorResponseMessage):
+                    f.set_exception(
+                        errors.get_error_by_code(response.code)(response.message))
+                else:
+                    f.set_result(response.result)
 
-                async with self._create_transport() as transport:
+    @lru_cache
+    def _convert_to_rpc_call(self, func):
+        def decorator(**kwargs):
+            nonlocal func
 
-                    await transport.send(in_data)
-                    out_data = await transport.receive(self._buffer_size)
+            request = self._make_request(func, kwargs)
+            in_data = self._stub.pack(request)
 
-                    response = self._stub.unpack(out_data)
+            self._loop.create_task(self._transport.send_message(in_data))
 
-                    if response.error:
-                        self._raise_error(response.error)
+            if isinstance(request, spec.CallingMessage):
+                f = asyncio.Future()
+                self._futures[request.id] = f
+                return f
 
-                    return response.result
+        return decorator
 
-            return decorator
-        return call_wrapper
+    def _make_request(self, local_fn, params):
+        map_params = local_fn(**params)
 
-    async def _make_request(self, original_func, params) -> spec.RequestMessage:
-        if inspect.iscoroutinefunction(original_func):
-            map_params = await original_func(**params)
+        is_notify = params.pop('_notify', False)
+        if is_notify:
+            request = spec.Notification(method=local_fn.__name__)
         else:
-            map_params = original_func(**params)
-
-        request = spec.RequestMessage(
-            id = self._request_id,
-            method = original_func.__name__,
-        )
-        self._request_id += 1
+            request = spec.CallingMessage(
+                id = self._request_id,
+                method = local_fn.__name__,
+            )
+            self._request_id += 1
 
         if map_params is None:
             request.params = params
@@ -81,15 +89,12 @@ class RPCClient:
 
         return request
 
-    def _raise_error(self, error: spec.Error):
-        e_class = errors.get_error_by_code(error.code)
-        if e_class:
-            raise e_class(error.message)
+    async def __aenter__(self):
+        reader, writer = await asyncio.open_connection(
+            self._host, self._port)
+        self._transport = _transport.ClientTransport(reader, writer)
+        self._loop.create_task(self._message_serving())
 
-        raise Exception('Unexpected error')
-
-    @asynccontextmanager
-    async def _create_transport(self):
-        reader, writer = await asyncio.open_connection(self._host, self._port)
-        async with Transport(writer, reader) as transport:
-            yield transport
+    async def __aexit__(self, exc_type, exc, tb):
+        await self._transport._send(self._transport.pack(b'CLOSE'))
+        await self._transport.close()

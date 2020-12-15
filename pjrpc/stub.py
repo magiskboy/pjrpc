@@ -1,67 +1,71 @@
+import typing as T
 import json
+import bz2
+import os
 from dataclasses import asdict
-from . import spec
+from . import types
 from . import errors
+from . import utils
+from . import spec
+
+
+compress = bz2.compress
+decompress = bz2.decompress
+
+
+def serializer(data: dict) -> bytes:
+    string = json.dumps(data, separators=(',', ':'))
+    return string.encode('utf-8')
+
+
+def deserializer(data: bytes) -> dict:
+    string = data.decode('utf-8')
+    return json.loads(string)
 
 
 class Stub:
-    def pack(self, message: spec.Message) -> bytes:
-        pass
+    __slots__ = ('_compress',)
 
-    def unpack(self, data: bytes) -> spec.Message:
-        pass
+    def __init__(self, compress: bool = False):
+        self._compress = compress
 
-
-class StubServer:
-    def pack(self, message: spec.ResponseMessage) -> bytes:
+    def unpack(self, data: bytes) -> types.Message:
         try:
 
-            data = asdict(message)
-            data = json.dumps(message, cls=spec.JSONMessageEncoder, separators=(',', ':')).encode('utf-8')
+            if self._compress:
+                data_json = deserializer(decompress(data))
+            else:
+                data_json = deserializer(data)
+
+            message_maker = None
+            if spec.is_request(data_json):
+                message_maker = utils.make_request_from_data
+            else:
+                message_maker = utils.make_response_from_data
+
+            if isinstance(data_json, list):
+                return [message_maker(**item) for item in data_json]
+
+            return message_maker(**data_json)
+
+        except (json.JSONDecodeError, OSError) as error:
+            raise errors.ParseError() from error
+
+    def pack(self, message: T.Union[types.Message]) -> bytes:
+        try:
+
+            if isinstance(message, list):
+                data = serializer([asdict(item) for item in message])
+            else:
+                data = serializer(asdict(message))
 
         except TypeError as error:
-            raise errors.MarshallError(str(error)) from error
+            raise errors.ParseError() from error
 
-        else:
-            return data
+        if self._compress:
+            try:
+                return compress(data)
+            except OSError as error:
+                raise errors.ParseError() from error
 
-    def unpack(self, data: bytes) -> spec.RequestMessage:
-        try:
-
-            data_dict = json.loads(data.decode('utf-8'))
-            ret = spec.RequestMessage(**data_dict)
-
-        except json.JSONDecodeError as error:
-            raise errors.UnmarshallError() from error
-
-        else:
-            return ret
-
-
-class StubClient:
-    def pack(self, message: spec.RequestMessage) -> bytes:
-        try:
-
-            data = asdict(message)
-            data = json.dumps(message, cls=spec.JSONMessageEncoder).encode('utf-8')
-
-        except TypeError as error:
-            raise errors.MarshallError(str(error)) from error
-
-        else:
-            return data
-
-    def unpack(self, data: bytes) -> spec.ResponseMessage:
-        try:
-
-            data_dict = json.loads(data.decode('utf-8'))
-            error = data_dict.pop('error', None)
-            ret = spec.ResponseMessage(**data_dict)
-            if error:
-                ret.error = spec.Error(**error)
-
-        except json.JSONDecodeError as error:
-            raise errors.UnmarshallError() from error
-
-        else:
-            return ret
+        return data

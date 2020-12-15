@@ -5,16 +5,16 @@ from dataclasses import dataclass
 
 @dataclass
 class Error:
-    code: T.Optional[int]
+    code: str
 
-    message: T.Optional[str]
+    message: str
+
+    data: T.Optional[dict] = None
 
 
 @dataclass
 class Message:
     jsonrpc: str = '2.0'
-
-    id: T.Union[str, int] = None
 
 
 @dataclass
@@ -25,34 +25,32 @@ class RequestMessage(Message):
 
 
 @dataclass
+class Notification(RequestMessage):
+    pass
+
+
+@dataclass
+class CallingMessage(RequestMessage):
+    id: T.Union[str, int] = None
+
+
+@dataclass
 class ResponseMessage(Message):
-    result: T.Optional[T.Mapping] = None
-
-    error: T.Optional[Error] = None
+    id: T.Union[str, int] = None
 
 
-class JSONMessageEncoder(JSONEncoder):
-    def default(self, o):
-        if isinstance(o, Message):
-            ret = {
-                'id': o.id,
-                'jsonrpc': o.jsonrpc,
-            }
+@dataclass
+class SuccessResponseMessage(ResponseMessage):
+    result: T.Mapping = None
 
-            if isinstance(o, ResponseMessage):
-                if o.result:
-                    ret['result'] = o.result
 
-                elif error := o.error:
-                    ret['error'] = {
-                        'code': error.code,
-                        'message': error.message,
-                    }
+@dataclass
+class ErrorResponseMessage(ResponseMessage):
+    error: Error = None
 
-            elif isinstance(o, RequestMessage):
-                ret['params'] = o.params
-                ret['method'] = o.method
 
-            return ret
+def is_request(data_dict: T.Union[list, dict]) -> bool :
+    if isinstance(data_dict, list):
+        return 'method' in data_dict[0]
 
-        return super().default(o)
+    return 'method' in data_dict

@@ -1,5 +1,9 @@
+import typing as T
 import asyncio
 from functools import partial
+from . import types
+from . import spec
+
 
 def load_app_from_string(app_path: str):
     if ':' not in app_path:
@@ -28,3 +32,26 @@ def to_async(timeout=None):
             return await asyncio.wait_for(f, timeout=timeout)
         return decorator
     return to_async_deco
+
+
+def make_request_from_data(**kwargs) -> types.Request:
+
+    message_id = kwargs.get('id')
+    if message_id is not None:
+        return spec.CallingMessage(**kwargs)
+
+    return spec.Notification(**kwargs)
+
+
+def make_response_from_data(**kwargs) -> types.Response:
+
+    if error := kwargs.get('error'):
+        message = spec.ErrorResponseMessage(**kwargs)
+
+        if isinstance(error, spec.Error):
+            message.error = error
+        message.error = spec.Error(**error)
+
+        return message
+
+    return spec.SuccessResponseMessage(**kwargs)
